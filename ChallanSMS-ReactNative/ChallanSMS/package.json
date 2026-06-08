@@ -6,23 +6,17 @@
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "start": "react-native start",
-    "build-android": "cd android && ./gradlew assembleRelease",
-    "build-ios": "react-native build-ios --configuration Release"
+    "build-android": "cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
     "react": "18.2.0",
     "react-native": "0.73.4",
     "@react-native-async-storage/async-storage": "^1.21.0",
-    "@react-native-community/datetimepicker": "^7.6.2",
-    "@react-native-google-signin/google-signin": "^11.0.0",
+    "@react-native-google-signin/google-signin": "^10.0.1",
     "react-native-document-picker": "^9.1.1",
     "react-native-fs": "^2.20.0",
-    "react-native-google-drive-api-wrapper": "^3.2.0",
     "react-native-permissions": "^4.1.5",
-    "react-native-send-intent": "^1.1.0",
-    "react-native-sms": "^1.1.1",
-    "react-native-vector-icons": "^10.0.3",
-    "react-native-xlsx-parser": "^0.1.0",
+    "react-native-google-drive-api-wrapper": "^2.1.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
