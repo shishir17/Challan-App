@@ -1,43 +1,25 @@
 {
   "name": "challan-sender",
-  "version": "1.0.0",
-  "description": "UP Traffic Department - Bulk Challan Messenger",
+  "version": "2.0.0",
+  "description": "UP Traffic Department - Bulk Challan Messenger (SMS + WhatsApp Auto Send)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win --publish never",
-    "build-mac": "electron-builder --mac --publish never",
     "build-linux": "electron-builder --linux --publish never",
-    "dev": "electron . --dev"
+    "build-mac": "electron-builder --mac --publish never"
   },
   "build": {
     "appId": "com.up.traffic.challan-sender",
     "productName": "Challan Sender",
-    "directories": {
-      "output": "dist"
-    },
-    "win": {
-      "target": "nsis",
-      "icon": "assets/icon.ico"
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "assets/icon.icns"
-    },
-    "linux": {
-      "target": "AppImage",
-      "icon": "assets/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Challan Sender"
-    }
+    "directories": { "output": "dist" },
+    "win": { "target": "nsis" },
+    "linux": { "target": "AppImage" },
+    "mac": { "target": "dmg" }
   },
   "dependencies": {
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "axios": "^1.6.7"
   },
   "devDependencies": {
     "electron": "^28.0.0",
