@@ -16,7 +16,7 @@ export default function LogsScreen({ logs, setLogs }) {
   const filtered = filter === 'all' ? logs : logs.filter(l => l.type === filter);
 
   const exportLogs = async () => {
-    const text = logs.map(l => `[${l.time}] [${l.type.toUpperCase()}] ${l.msg}`).join('\n');
+    const text = logs.map(l => `[${l.date || '----------'} ${l.time}] [${l.type.toUpperCase()}] ${l.msg}`).join('\n');
     await Share.share({ message: text, title: 'ChallanSMS Logs' });
   };
 
@@ -93,15 +93,25 @@ export default function LogsScreen({ logs, setLogs }) {
           data={filtered}
           keyExtractor={item => String(item.id)}
           style={s.list}
-          renderItem={({ item }) => (
-            <View style={s.entry}>
-              <Text style={s.entryTime}>{item.time}</Text>
-              <Text style={[s.entryMsg, { color: COLOR[item.type] || C.muted }]}>
-                {item.msg}
-              </Text>
-            </View>
-          )}
-          ItemSeparatorComponent={() => <View style={s.sep} />}
+          renderItem={({ item, index }) => {
+            const prev = filtered[index - 1];
+            const showDate = item.date && (!prev || prev.date !== item.date);
+            return (
+              <>
+                {showDate && (
+                  <View style={s.dateHeader}>
+                    <Text style={s.dateHeaderTxt}>📅 {item.date}</Text>
+                  </View>
+                )}
+                <View style={s.entry}>
+                  <Text style={s.entryTime}>{item.time}</Text>
+                  <Text style={[s.entryMsg, { color: COLOR[item.type] || C.muted }]}>
+                    {item.msg}
+                  </Text>
+                </View>
+              </>
+            );
+          }}
         />
       )}
     </View>
@@ -126,7 +136,11 @@ const s = StyleSheet.create({
   btnGhost:       { borderWidth: 1, borderColor: C.border },
   btnTxt:         { fontSize: 12, fontWeight: '700' },
   list:           { flex: 1, paddingHorizontal: 12 },
-  entry:          { flexDirection: 'row', gap: 8, paddingVertical: 8 },
+  dateHeader:     { paddingVertical: 6, paddingHorizontal: 10, marginTop: 8, marginBottom: 2,
+                    backgroundColor: C.surface, borderRadius: 6, borderWidth: 1, borderColor: C.border },
+  dateHeaderTxt:  { fontSize: 11, fontWeight: '800', color: C.accent, letterSpacing: 0.5 },
+  entry:          { flexDirection: 'row', gap: 8, paddingVertical: 8,
+                    borderBottomWidth: 1, borderBottomColor: 'rgba(37,45,66,.4)' },
   entryTime:      { fontSize: 10, color: C.muted, fontFamily: 'monospace',
                     width: 58, paddingTop: 1, flexShrink: 0 },
   entryMsg:       { flex: 1, fontSize: 12, lineHeight: 17 },

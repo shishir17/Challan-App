@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { C, DEFAULT_HINDI, DEFAULT_ENGLISH, DAILY_LIMIT } from '../utils/theme';
 import { resetDailyCount } from '../utils/smsService';
+import { clearCampaign } from '../utils/campaign';
 
 const STABS = ['Templates', 'General', 'About'];
 
@@ -155,7 +156,7 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
             <Text style={st.cardTitle}>📅 DAILY LIMIT</Text>
             <View style={st.infoBox}>
               <Text style={st.infoTxt}>
-                Maximum <Text style={{ color: C.yellow, fontWeight: '700' }}>200 SMS per day</Text> enforced automatically.{'\n'}
+                Maximum <Text style={{ color: C.yellow, fontWeight: '700' }}>{DAILY_LIMIT} SMS per day</Text> enforced automatically.{'\n'}
                 This protects your SIM from being flagged as spam by the carrier.{'\n\n'}
                 Counter resets automatically at midnight every day.
               </Text>
@@ -163,15 +164,58 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
 
             <View style={[st.row, { marginTop: 12 }]}>
               <View style={{ flex: 1 }}>
-                <Text style={st.switchLabel}>Custom Daily Limit</Text>
-                <Text style={st.switchSub}>Max allowed: {DAILY_LIMIT}</Text>
+                <Text style={st.switchLabel}>Daily Limit (per day)</Text>
+                <Text style={st.switchSub}>Records sent per day · batch size · max {DAILY_LIMIT}</Text>
               </View>
               <TextInput
                 style={[st.inp, { width: 80, textAlign: 'center' }]}
                 value={String(s.dailyLimit || DAILY_LIMIT)}
-                onChangeText={v => update('dailyLimit', Math.min(parseInt(v)||200, DAILY_LIMIT))}
+                onChangeText={v => update('dailyLimit', Math.min(Math.max(parseInt(v) || 1, 1), DAILY_LIMIT))}
                 keyboardType="numeric"
               />
+            </View>
+          </View>
+
+          <View style={st.card}>
+            <Text style={st.cardTitle}>🗂 BATCHING & SCHEDULING</Text>
+
+            <View style={st.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={st.switchLabel}>Batch & Schedule Sending</Text>
+                <Text style={st.switchSub}>
+                  ON: split the sheet into daily batches of {s.dailyLimit || DAILY_LIMIT}; send one batch
+                  per day. OFF: send only the top {s.dailyLimit || DAILY_LIMIT} records now.
+                </Text>
+              </View>
+              <Switch
+                value={s.batchEnabled !== false}
+                onValueChange={v => update('batchEnabled', v)}
+                trackColor={{ false: C.border, true: C.accent }}
+                thumbColor={C.white}
+              />
+            </View>
+
+            <View style={[st.row, { marginTop: 14 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={st.switchLabel}>Sort by Amount (high → low)</Text>
+                <Text style={st.switchSub}>
+                  ON: order records by "Amount (Rs.)" descending before sending. OFF:
+                  keep the sheet's original order.
+                </Text>
+              </View>
+              <Switch
+                value={s.sortByAmount !== false}
+                onValueChange={v => update('sortByAmount', v)}
+                trackColor={{ false: C.border, true: C.accent }}
+                thumbColor={C.white}
+              />
+            </View>
+
+            <View style={[st.infoBox, { marginTop: 14 }]}>
+              <Text style={st.infoTxt}>
+                Changing these options applies the next time you load a sheet. A
+                schedule already in progress keeps its original settings.
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -179,6 +223,26 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
               onPress={handleResetDaily}
             >
               <Text style={[st.btnTxt, { color: C.red }]}>🔄 Reset Today's Counter (Testing Only)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[st.btn, st.btnGhost, { marginTop: 8 }]}
+              onPress={() => {
+                Alert.alert(
+                  'Clear Saved Schedule',
+                  'This deletes the current multi-day batch plan. Re-upload the sheet to start a new schedule.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Clear', style: 'destructive', onPress: async () => {
+                      await clearCampaign();
+                      addLog('🗑 Cleared saved batch schedule', 'warn');
+                      Alert.alert('Done', 'Saved schedule cleared. Reload your sheet on the Send tab.');
+                    }},
+                  ]
+                );
+              }}
+            >
+              <Text style={[st.btnTxt, { color: C.muted }]}>🗑 Clear Saved Schedule</Text>
             </TouchableOpacity>
           </View>
 

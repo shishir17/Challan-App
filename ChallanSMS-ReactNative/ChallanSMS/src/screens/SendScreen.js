@@ -1,17 +1,20 @@
 // src/screens/SendScreen.js
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet,
-  Alert, ActivityIndicator, Platform, FlatList, TextInput, Modal,
+  Alert, ActivityIndicator, Platform, TextInput, Modal,
 } from 'react-native';
 import { PermissionsAndroid } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { C, DAILY_LIMIT } from '../utils/theme';
 import {
   sendSMS, getDailyCount, incrementDailyCount,
-  canSendMore, applyTemplate, getContact,
+  applyTemplate, getContact,
 } from '../utils/smsService';
 import { pickFromStorage, parseCSVText } from '../utils/fileLoader';
+import {
+  orderRows, buildCampaign, saveCampaign, loadCampaign, clearCampaign,
+  currentBatch, isBatchUnlocked, allBatchesSent, completeBatch, daysUntil,
+} from '../utils/campaign';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -20,7 +23,6 @@ export default function SendScreen({
   rowStatus, setRowStatus, settings, addLog,
 }) {
   const [sending, setSending]       = useState(false);
-  const [stopFlag, setStopFlag]     = useState(false);
   const [progress, setProgress]     = useState(0);
   const [dailyCount, setDailyCount] = useState(0);
   const [previewIdx, setPreviewIdx] = useState(0);
@@ -28,11 +30,29 @@ export default function SendScreen({
   const [pasteText, setPasteText]   = useState('');
   const [pasteModal, setPasteModal] = useState(false);
   const [loading, setLoading]       = useState(false);
+  const [campaign, setCampaign]     = useState(null);
   const stopRef = useRef(false);
 
-  // Refresh daily count on focus
+  // Effective daily limit, driven by Settings, capped for SIM safety. While a
+  // campaign is in progress we honor the batch size it was built with, so that
+  // changing the setting mid-schedule never truncates a day's batch.
+  const settingsLimit = Math.min(Math.max(parseInt(settings.dailyLimit, 10) || DAILY_LIMIT, 1), DAILY_LIMIT);
+  const LIMIT         = campaign ? campaign.batchSize : settingsLimit;
+  const batchEnabled  = settings.batchEnabled !== false;
+  const sortByAmount  = settings.sortByAmount !== false;
+
+  // ── On mount: refresh daily count and rehydrate any in-progress campaign ─────
   React.useEffect(() => {
     getDailyCount().then(setDailyCount);
+    loadCampaign().then(c => {
+      if (c) {
+        setCampaign(c);
+        setRows(c.rows);
+        setFileName(c.fileName);
+        setRowStatus(c.rowStatus || {});
+        setPreviewIdx(0);
+      }
+    });
   }, []);
 
   // ── Request SMS permission (Android) ────────────────────────────────────────
@@ -50,19 +70,44 @@ export default function SendScreen({
     return granted === PermissionsAndroid.RESULTS.GRANTED;
   };
 
+  // ── Take freshly-parsed rows and set up either a campaign or a single shot ───
+  const ingestRows = async (parsed, fn) => {
+    setRowStatus({});
+    setProgress(0);
+    setPreviewIdx(0);
+    setFileName(fn);
+
+    if (batchEnabled) {
+      // Fresh campaign uses the current Settings limit (not any prior campaign's size).
+      const c = buildCampaign(parsed, { batchSize: settingsLimit, sortByAmount, fileName: fn });
+      setCampaign(c);
+      setRows(c.rows);
+      await saveCampaign(c);
+      addLog(
+        `✅ Loaded "${fn}" — ${c.rows.length} records · ${c.batches.length} day(s) × ${c.batchSize}/day` +
+        (sortByAmount ? ' · sorted by amount' : ''),
+        'success'
+      );
+    } else {
+      const ordered = orderRows(parsed, sortByAmount);
+      setCampaign(null);
+      await clearCampaign();
+      setRows(ordered);
+      addLog(
+        `✅ Loaded "${fn}" — ${ordered.length} records · single-shot top ${settingsLimit}` +
+        (sortByAmount ? ' · sorted by amount' : ''),
+        'success'
+      );
+    }
+  };
+
   // ── Load from Storage ────────────────────────────────────────────────────────
   const loadFromStorage = async () => {
     setLoadModal(false);
     setLoading(true);
     try {
       const { rows: r, fileName: fn } = await pickFromStorage();
-      // pickFromStorage returns parsed rows from fileLoader
-      setRows(r);
-      setFileName(fn);
-      setRowStatus({});
-      setProgress(0);
-      setPreviewIdx(0);
-      addLog(`✅ Loaded "${fn}" — ${r.length} records`, 'success');
+      await ingestRows(r, fn);
     } catch (e) {
       if (!e.toString().includes('cancel')) {
         addLog(`❌ File load error: ${e.message}`, 'error');
@@ -73,68 +118,55 @@ export default function SendScreen({
   };
 
   // ── Load from paste ──────────────────────────────────────────────────────────
-  const loadFromPaste = () => {
+  const loadFromPaste = async () => {
     try {
       const r = parseCSVText(pasteText);
-      setRows(r);
-      setFileName('Pasted data');
-      setRowStatus({});
+      await ingestRows(r, 'Pasted data');
       setPasteModal(false);
       setPasteText('');
-      addLog(`✅ Parsed pasted data — ${r.length} records`, 'success');
     } catch (e) {
       Alert.alert('Parse Error', e.message);
     }
   };
 
-  // ── Start Sending ────────────────────────────────────────────────────────────
-  const startSending = async () => {
-    if (!rows.length) return Alert.alert('No Data', 'Load a file first.');
-
-    const daily = await getDailyCount();
-    const remaining = DAILY_LIMIT - daily;
-    if (remaining <= 0) {
-      return Alert.alert(
-        'Daily Limit Reached',
-        `You have sent ${daily} SMS today. Limit is ${DAILY_LIMIT}/day.\nTry again tomorrow.`
-      );
-    }
-
-    if (Platform.OS === 'android') {
-      const ok = await requestSmsPermission();
-      if (!ok) return Alert.alert('Permission Denied', 'SMS permission is required to send messages.');
-    }
-
-    const toSend = Math.min(rows.length, remaining);
-    Alert.alert(
-      'Confirm Send',
-      `Send SMS to ${toSend} contacts?\n(${daily} sent today · ${remaining} remaining today · Limit: ${DAILY_LIMIT}/day)\n\nDelay: ${settings.delay}ms between each`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Start', style: 'default', onPress: () => doSend(toSend) },
-      ]
-    );
+  // ── Clear everything (Change file) ────────────────────────────────────────────
+  const clearAll = async () => {
+    setRows([]);
+    setFileName('');
+    setRowStatus({});
+    setProgress(0);
+    setCampaign(null);
+    await clearCampaign();
   };
 
-  const doSend = async (limit) => {
+  // ── Core sender: sends rows in [start, end) ──────────────────────────────────
+  const doSend = async ({ start, end, batch }) => {
     setSending(true);
     stopRef.current = false;
-    setStopFlag(false);
     setProgress(0);
 
     const template = settings.lang === 'hindi'
       ? settings.hindiTemplate
       : settings.englishTemplate;
 
-    addLog(`🚀 Starting — ${limit} records · ${Platform.OS === 'android' ? 'Direct SIM' : 'iOS Messages'}`, 'info');
+    let remaining = LIMIT - (await getDailyCount());
+    const total   = Math.max(1, end - start);
+    const dayTag  = batch ? `Day ${batch.index + 1} · ` : '';
+    const method  = Platform.OS === 'android' ? 'Direct SIM' : 'iOS Messages';
 
-    let sentCount = 0;
+    addLog(
+      `🚀 ${batch ? `Day ${batch.index + 1} batch` : 'Single-shot send'} · ${end - start} records` +
+      `${batch ? ` (rows ${start + 1}–${end})` : ` (top ${end})`} · via ${method}`,
+      'info'
+    );
 
-    for (let i = 0; i < rows.length && sentCount < limit; i++) {
-      if (stopRef.current) {
-        addLog(`⛔ Stopped at ${i + 1}/${rows.length}`, 'warn');
-        break;
-      }
+    let sent = 0, failed = 0, skipped = 0;
+    const localStatus = {};
+
+    let i = start;
+    for (; i < end; i++) {
+      if (stopRef.current) { addLog(`⛔ Stopped at row ${i + 1}`, 'warn'); break; }
+      if (remaining <= 0)  { addLog(`📅 Daily limit (${LIMIT}) reached — stopping`, 'warn'); break; }
 
       const row     = rows[i];
       const contact = getContact(row);
@@ -143,52 +175,120 @@ export default function SendScreen({
       const n       = i + 1;
 
       if (!contact || contact.length < 8) {
+        skipped++; localStatus[i] = 'skipped';
         setRowStatus(prev => ({ ...prev, [i]: 'skipped' }));
-        addLog(`[${n}] ⚠️  SKIP — ${vehicle} — no contact`, 'warn');
-        setProgress(Math.round((n / rows.length) * 100));
+        addLog(`[${dayTag}#${n}] ⚠️  SKIP — ${vehicle} — no contact`, 'warn');
+        setProgress(Math.round(((i - start + 1) / total) * 100));
         continue;
       }
 
       const message = applyTemplate(template, row);
-
       try {
         const res = await sendSMS(contact, message);
         if (res.success) {
           await incrementDailyCount();
-          sentCount++;
+          sent++; remaining--;
           setDailyCount(await getDailyCount());
+          localStatus[i] = 'sent';
           setRowStatus(prev => ({ ...prev, [i]: 'sent' }));
           const tag = res.manual ? '💬 Opened (iOS)' : '📱 SMS Sent';
-          addLog(`[${n}] ${tag} → +91${contact} | ${vehicle} | ₹${amount}`, 'success');
+          addLog(`[${dayTag}#${n}] ${tag} → +91${contact} | ${vehicle} | ₹${amount}`, 'success');
         } else {
+          failed++; localStatus[i] = 'failed';
           setRowStatus(prev => ({ ...prev, [i]: 'failed' }));
-          addLog(`[${n}] ❌ FAIL → ${contact} | ${res.error}`, 'error');
+          addLog(`[${dayTag}#${n}] ❌ FAIL → ${contact} | ${res.error}`, 'error');
         }
       } catch (e) {
+        failed++; localStatus[i] = 'failed';
         setRowStatus(prev => ({ ...prev, [i]: 'failed' }));
-        addLog(`[${n}] ❌ ERROR → ${contact} | ${e.message}`, 'error');
+        addLog(`[${dayTag}#${n}] ❌ ERROR → ${contact} | ${e.message}`, 'error');
       }
 
-      setProgress(Math.round((n / rows.length) * 100));
-
-      // Delay between sends (except last)
-      if (i < rows.length - 1 && !stopRef.current) {
-        await sleep(settings.delay);
-      }
+      setProgress(Math.round(((i - start + 1) / total) * 100));
+      if (i < end - 1 && !stopRef.current && remaining > 0) await sleep(settings.delay);
     }
 
+    const completed = i >= end; // reached the end without stopping / hitting limit
     setSending(false);
-    const s = Object.values(rowStatus);
-    addLog(
-      `🏁 Done — ✅ ${sentCount} sent · ❌ ${s.filter(x=>x==='failed').length} failed`,
-      'info'
-    );
+
+    // Persist campaign progress
+    if (campaign && batch) {
+      const updated = completed
+        ? completeBatch(campaign, batch.index, { sent, failed, skipped }, localStatus)
+        : { ...campaign, rowStatus: { ...campaign.rowStatus, ...localStatus } };
+      setCampaign(updated);
+      await saveCampaign(updated);
+      if (completed) {
+        const next = updated.batches[updated.currentBatch];
+        addLog(
+          next
+            ? `🏁 Day ${batch.index + 1} done — ✅ ${sent} ✖ ${failed} ⏭ ${skipped}. ` +
+              `Next batch unlocks ${next.unlockDate}.`
+            : `🏁 Final batch done — ✅ ${sent} ✖ ${failed} ⏭ ${skipped}. All ${updated.rows.length} records processed.`,
+          'info'
+        );
+      } else {
+        addLog(`🏁 Stopped — ✅ ${sent} ✖ ${failed} ⏭ ${skipped} (batch not yet complete)`, 'info');
+      }
+    } else {
+      addLog(`🏁 Done — ✅ ${sent} sent · ❌ ${failed} failed · ⏭ ${skipped} skipped`, 'info');
+    }
     getDailyCount().then(setDailyCount);
   };
 
-  const stopSending = () => {
-    stopRef.current = true;
-    setStopFlag(true);
+  const stopSending = () => { stopRef.current = true; };
+
+  // ── Single-shot send (batching OFF): top N records ───────────────────────────
+  const startSending = async () => {
+    if (!rows.length) return Alert.alert('No Data', 'Load a file first.');
+    const daily = await getDailyCount();
+    const remaining = LIMIT - daily;
+    if (remaining <= 0) {
+      return Alert.alert('Daily Limit Reached',
+        `You have sent ${daily} SMS today. Limit is ${LIMIT}/day.\nTry again tomorrow.`);
+    }
+    if (Platform.OS === 'android') {
+      const ok = await requestSmsPermission();
+      if (!ok) return Alert.alert('Permission Denied', 'SMS permission is required to send messages.');
+    }
+    const end = Math.min(rows.length, remaining);
+    Alert.alert(
+      'Confirm Send',
+      `Send SMS to the top ${end} record(s)?\n(${daily} sent today · ${remaining} remaining · Limit: ${LIMIT}/day)\n\nDelay: ${settings.delay}ms between each`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Start', onPress: () => doSend({ start: 0, end }) },
+      ]
+    );
+  };
+
+  // ── Batch send (batching ON): the current day's batch ────────────────────────
+  const sendCurrentBatch = async () => {
+    const batch = currentBatch(campaign);
+    if (!batch) return Alert.alert('All Done', 'Every batch has already been sent. 🎉');
+    if (!isBatchUnlocked(batch)) {
+      return Alert.alert('Batch Locked',
+        `Day ${batch.index + 1} unlocks on ${batch.unlockDate}` +
+        (daysUntil(batch.unlockDate) ? ` (in ${daysUntil(batch.unlockDate)} day(s)).` : '.'));
+    }
+    const daily = await getDailyCount();
+    if (LIMIT - daily <= 0) {
+      return Alert.alert('Daily Limit Reached',
+        `You have sent ${daily} SMS today. Come back tomorrow for the next batch.`);
+    }
+    if (Platform.OS === 'android') {
+      const ok = await requestSmsPermission();
+      if (!ok) return Alert.alert('Permission Denied', 'SMS permission is required to send messages.');
+    }
+    const count = batch.end - batch.start;
+    Alert.alert(
+      'Confirm Send',
+      `Send Day ${batch.index + 1} — ${count} record(s) (rows ${batch.start + 1}–${batch.end})?\n(${daily} sent today · Limit: ${LIMIT}/day)`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Start', onPress: () => doSend({ start: batch.start, end: batch.end, batch }) },
+      ]
+    );
   };
 
   // ── Stats ────────────────────────────────────────────────────────────────────
@@ -197,6 +297,18 @@ export default function SendScreen({
   const skipped = Object.values(rowStatus).filter(x => x === 'skipped').length;
   const prow    = rows[previewIdx] || {};
 
+  // ── Batch button state ───────────────────────────────────────────────────────
+  const batch       = currentBatch(campaign);
+  const batchDone   = allBatchesSent(campaign);
+  const batchOpen   = batch && isBatchUnlocked(batch) && dailyCount < LIMIT;
+  const limitHitTdy = dailyCount >= LIMIT;
+
+  let batchBtnLabel = '';
+  if (batchDone)            batchBtnLabel = '✅ All batches sent';
+  else if (batchOpen)       batchBtnLabel = `📤 Send Day ${batch.index + 1} (${batch.end - batch.start} SMS)`;
+  else if (batch && limitHitTdy) batchBtnLabel = '📅 Limit reached — next batch tomorrow';
+  else if (batch)           batchBtnLabel = `🔒 Day ${batch.index + 1} unlocks ${batch.unlockDate}`;
+
   return (
     <ScrollView style={s.root} contentContainerStyle={s.content}>
 
@@ -204,16 +316,14 @@ export default function SendScreen({
       <View style={s.dailyBar}>
         <Text style={s.dailyLabel}>📅 Today's SMS</Text>
         <View style={s.dailyRight}>
-          <Text style={[s.dailyNum, dailyCount >= DAILY_LIMIT && { color: C.red }]}>
-            {dailyCount} / {DAILY_LIMIT}
+          <Text style={[s.dailyNum, dailyCount >= LIMIT && { color: C.red }]}>
+            {dailyCount} / {LIMIT}
           </Text>
-          {dailyCount >= DAILY_LIMIT && (
-            <Text style={s.limitReached}>LIMIT REACHED</Text>
-          )}
+          {dailyCount >= LIMIT && <Text style={s.limitReached}>LIMIT REACHED</Text>}
         </View>
         <View style={s.dailyTrack}>
-          <View style={[s.dailyFill, { width: `${Math.min((dailyCount / DAILY_LIMIT) * 100, 100)}%`,
-            backgroundColor: dailyCount >= DAILY_LIMIT ? C.red : C.green }]} />
+          <View style={[s.dailyFill, { width: `${Math.min((dailyCount / LIMIT) * 100, 100)}%`,
+            backgroundColor: dailyCount >= LIMIT ? C.red : C.green }]} />
         </View>
       </View>
 
@@ -255,12 +365,43 @@ export default function SendScreen({
               <Text style={s.fileName} numberOfLines={1}>{fileName}</Text>
               <Text style={s.fileMeta}>{rows.length} records loaded</Text>
             </View>
-            <TouchableOpacity onPress={() => { setRows([]); setFileName(''); setRowStatus({}); setProgress(0); }}>
+            <TouchableOpacity onPress={clearAll}>
               <Text style={s.changeBtn}>Change</Text>
             </TouchableOpacity>
           </View>
         )}
       </View>
+
+      {/* ── Daily schedule (batching ON) ── */}
+      {batchEnabled && campaign && rows.length > 0 && (
+        <View style={s.card}>
+          <Text style={s.cardTitle}>🗂 DAILY SCHEDULE</Text>
+          <Text style={s.scheduleSummary}>
+            {campaign.rows.length} records · {campaign.batches.length} day(s) × {campaign.batchSize}/day ·{' '}
+            {campaign.sortByAmount ? 'sorted by amount (high→low)' : 'original sheet order'}
+          </Text>
+          <ScrollView style={s.batchList} nestedScrollEnabled>
+            {campaign.batches.map(b => {
+              const isCur = b.index === campaign.currentBatch;
+              const tag   = b.status === 'sent'
+                ? `✅ ${b.sentDate || 'sent'} · ✓${b.sent} ✗${b.failed}`
+                : isBatchUnlocked(b)
+                  ? '🔓 ready today'
+                  : b.unlockDate
+                    ? `🔒 ${b.unlockDate}`
+                    : '⏳ after previous';
+              const col = b.status === 'sent' ? C.green : isBatchUnlocked(b) ? C.accent : C.muted;
+              return (
+                <View key={b.index} style={[s.batchRow, isCur && b.status !== 'sent' && s.batchRowHL]}>
+                  <Text style={s.batchDay}>Day {b.index + 1}</Text>
+                  <Text style={s.batchRange}>rows {b.start + 1}–{b.end} ({b.end - b.start})</Text>
+                  <Text style={[s.batchTag, { color: col }]}>{tag}</Text>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
 
       {/* ── Platform note ── */}
       <View style={[s.infoBox, Platform.OS === 'ios' && { borderColor: C.yellow }]}>
@@ -308,7 +449,7 @@ export default function SendScreen({
         </View>
       )}
 
-      {/* ── Progress ── */}
+      {/* ── Send controls ── */}
       {rows.length > 0 && (
         <View style={s.card}>
           <Text style={s.cardTitle}>🚀 SEND CONTROLS</Text>
@@ -325,17 +466,25 @@ export default function SendScreen({
           </View>
 
           <View style={s.btnRow}>
-            {!sending ? (
-              <TouchableOpacity
-                style={[s.btn, s.btnPrimary, (!rows.length || dailyCount >= DAILY_LIMIT) && s.btnDisabled]}
-                onPress={startSending}
-                disabled={!rows.length || dailyCount >= DAILY_LIMIT}
-              >
-                <Text style={s.btnTxt}>▶ Start Sending ({Math.min(rows.length, DAILY_LIMIT - dailyCount)} SMS)</Text>
-              </TouchableOpacity>
-            ) : (
+            {sending ? (
               <TouchableOpacity style={[s.btn, s.btnDanger]} onPress={stopSending}>
                 <Text style={s.btnTxt}>⏹ Stop</Text>
+              </TouchableOpacity>
+            ) : batchEnabled && campaign ? (
+              <TouchableOpacity
+                style={[s.btn, s.btnPrimary, !batchOpen && s.btnDisabled]}
+                onPress={sendCurrentBatch}
+                disabled={!batchOpen}
+              >
+                <Text style={s.btnTxt}>{batchBtnLabel}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[s.btn, s.btnPrimary, (!rows.length || dailyCount >= LIMIT) && s.btnDisabled]}
+                onPress={startSending}
+                disabled={!rows.length || dailyCount >= LIMIT}
+              >
+                <Text style={s.btnTxt}>▶ Start Sending ({Math.min(rows.length, LIMIT - dailyCount)} SMS)</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity
@@ -346,7 +495,9 @@ export default function SendScreen({
             </TouchableOpacity>
           </View>
           <Text style={{ fontSize: 10, color: C.muted, marginTop: 8, textAlign: 'center' }}>
-            Delay: {settings.delay}ms between messages · Limit: {DAILY_LIMIT}/day
+            Delay: {settings.delay}ms between messages · Limit: {LIMIT}/day
+            {batchEnabled && campaign && batch && batch.status !== 'sent' && !isBatchUnlocked(batch) &&
+              ` · next batch in ${daysUntil(batch.unlockDate)} day(s)`}
           </Text>
         </View>
       )}
@@ -358,6 +509,7 @@ export default function SendScreen({
           {rows.slice(0, 100).map((row, i) => {
             const st2 = rowStatus[i] || 'pending';
             const dotColor = st2 === 'sent' ? C.green : st2 === 'failed' ? C.red : st2 === 'skipped' ? C.muted : C.yellow;
+            const day = batchEnabled && campaign ? Math.floor(i / campaign.batchSize) + 1 : null;
             return (
               <TouchableOpacity
                 key={i}
@@ -365,6 +517,7 @@ export default function SendScreen({
                 onPress={() => setPreviewIdx(i)}
               >
                 <View style={[s.statusDot, { backgroundColor: dotColor }]} />
+                {day != null && <Text style={s.tableDay}>D{day}</Text>}
                 <Text style={[s.tableVehicle]}>{row['Vehicle Number'] || '—'}</Text>
                 <Text style={s.tableContact}>{getContact(row) || '—'}</Text>
                 <Text style={[s.tableAmount, { color: C.green }]}>₹{row['Amount (Rs.)'] || '0'}</Text>
@@ -374,7 +527,7 @@ export default function SendScreen({
           })}
           {rows.length > 100 && (
             <Text style={{ color: C.muted, fontSize: 11, textAlign: 'center', padding: 8 }}>
-              Showing 100 of {rows.length} — all will be processed during send
+              Showing 100 of {rows.length} — all are processed across the schedule
             </Text>
           )}
         </View>
@@ -496,6 +649,15 @@ const s = StyleSheet.create({
   fileName:      { fontSize: 13, fontWeight: '600', color: C.text },
   fileMeta:      { fontSize: 11, color: C.muted, marginTop: 2 },
   changeBtn:     { fontSize: 12, color: C.accent, fontWeight: '600', paddingLeft: 10 },
+  scheduleSummary:{ fontSize: 11, color: C.text, marginBottom: 10, lineHeight: 16 },
+  batchList:     { maxHeight: 170, backgroundColor: C.surface, borderRadius: 8,
+                   borderWidth: 1, borderColor: C.border },
+  batchRow:      { flexDirection: 'row', alignItems: 'center', paddingVertical: 7,
+                   paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(37,45,66,.5)', gap: 8 },
+  batchRowHL:    { backgroundColor: 'rgba(79,142,247,.10)' },
+  batchDay:      { color: C.text, fontSize: 11, fontWeight: '700', width: 52 },
+  batchRange:    { color: C.muted, fontSize: 11, flex: 1 },
+  batchTag:      { fontSize: 10, fontWeight: '700' },
   infoBox:       { padding: 10, borderRadius: 8, borderWidth: 1, borderColor: C.green,
                    backgroundColor: 'rgba(34,197,94,.07)' },
   infoText:      { fontSize: 11, color: C.text, lineHeight: 16 },
@@ -524,7 +686,8 @@ const s = StyleSheet.create({
                    borderBottomWidth: 1, borderBottomColor: 'rgba(37,45,66,.5)', gap: 6 },
   tableRowHL:    { backgroundColor: 'rgba(79,142,247,.07)', borderRadius: 6 },
   statusDot:     { width: 7, height: 7, borderRadius: 4 },
-  tableVehicle:  { color: C.accent, fontSize: 11, fontWeight: '600', width: 90 },
+  tableDay:      { color: C.purple, fontSize: 10, fontWeight: '700', width: 26 },
+  tableVehicle:  { color: C.accent, fontSize: 11, fontWeight: '600', width: 84 },
   tableContact:  { color: C.text, fontSize: 11, flex: 1, fontFamily: 'monospace' },
   tableAmount:   { fontSize: 11, fontWeight: '600', width: 55, textAlign: 'right' },
   tableStatus:   { fontSize: 9, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, width: 48, textAlign: 'right' },

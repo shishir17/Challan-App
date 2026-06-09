@@ -28,7 +28,9 @@ export default function App() {
     hindiTemplate:  DEFAULT_HINDI,
     englishTemplate: DEFAULT_ENGLISH,
     countryCode:    '91',
-    dailyLimit:     200,
+    dailyLimit:     100,
+    batchEnabled:   true,   // split sheet into daily batches & schedule them
+    sortByAmount:   true,   // sort by Amount (Rs.) desc before batching
   });
   const [hasNewLog, setHasNewLog]   = useState(false);
 
@@ -48,9 +50,12 @@ export default function App() {
   };
 
   const addLog = (msg, type = 'info') => {
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const entry = {
       id:   Date.now() + Math.random(),
-      time: new Date().toLocaleTimeString('en-IN', { hour12: false }),
+      time: now.toLocaleTimeString('en-IN', { hour12: false }),
+      date,
       msg,
       type,
     };
