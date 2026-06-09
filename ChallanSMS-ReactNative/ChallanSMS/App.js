@@ -22,6 +22,7 @@ export default function App() {
   const [fileName, setFileName]     = useState('');
   const [logs, setLogs]             = useState([]);
   const [rowStatus, setRowStatus]   = useState({});
+  const [columns, setColumns]       = useState([]);   // headers from the loaded file
   const [settings, setSettings]     = useState({
     lang:           'hindi',
     delay:          3000,
@@ -29,6 +30,7 @@ export default function App() {
     englishTemplate: DEFAULT_ENGLISH,
     countryCode:    '91',
     dailyLimit:     100,
+    contactColumn:  'Violator Contact', // header holding the phone number (configurable)
     batchEnabled:   true,   // split sheet into daily batches & schedule them
     sortByAmount:   true,   // sort by Amount (Rs.) desc before batching
   });
@@ -75,6 +77,7 @@ export default function App() {
   const sharedProps = {
     rows, setRows, fileName, setFileName,
     logs, setLogs, rowStatus, setRowStatus,
+    columns, setColumns,
     settings, saveSettings, addLog,
   };
 
@@ -84,10 +87,10 @@ export default function App() {
 
       {/* Top bar */}
       <View style={s.topbar}>
-        <Text style={s.logo}>🚦 <Text style={s.logoAcc}>Challan</Text>
-          <Text style={s.logoMuted}>SMS</Text>
+        <Text style={s.logo}>📨 <Text style={s.logoAcc}>Bulk</Text>
+          <Text style={s.logoMuted}> SMS</Text>
         </Text>
-        <Text style={s.sub}>UP Traffic Dept · SIM Based</Text>
+        <Text style={s.sub}>SMS Sim Based</Text>
       </View>
 
       {/* Screen */}

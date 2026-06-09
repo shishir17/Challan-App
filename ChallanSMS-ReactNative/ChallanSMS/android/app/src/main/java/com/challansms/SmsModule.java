@@ -12,6 +12,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Build;
 import android.telephony.SmsManager;
 import android.util.Log;
 
@@ -85,10 +86,22 @@ public class SmsModule extends ReactContextBaseJavaModule {
                 }
             };
 
-            reactContext.registerReceiver(
-                sentReceiver,
-                new IntentFilter(sentAction)
-            );
+            // Android 13+ (API 33+) requires an explicit export flag when registering
+            // a runtime receiver. This receiver is for an app-internal action only,
+            // so it must NOT be exported. (Fixes the Android 14 crash:
+            // "One of RECEIVER_EXPORTED or RECEIVER_NOT_EXPORTED should be specified".)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                reactContext.registerReceiver(
+                    sentReceiver,
+                    new IntentFilter(sentAction),
+                    Context.RECEIVER_NOT_EXPORTED
+                );
+            } else {
+                reactContext.registerReceiver(
+                    sentReceiver,
+                    new IntentFilter(sentAction)
+                );
+            }
 
             // Send — multipart if message is long
             if (parts.size() == 1) {

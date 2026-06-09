@@ -20,8 +20,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export default function SendScreen({
   rows, setRows, fileName, setFileName,
-  rowStatus, setRowStatus, settings, addLog,
+  rowStatus, setRowStatus, settings, addLog, setColumns,
 }) {
+  const contactColumn = settings.contactColumn;
   const [sending, setSending]       = useState(false);
   const [progress, setProgress]     = useState(0);
   const [dailyCount, setDailyCount] = useState(0);
@@ -51,6 +52,7 @@ export default function SendScreen({
         setFileName(c.fileName);
         setRowStatus(c.rowStatus || {});
         setPreviewIdx(0);
+        if (setColumns && c.rows && c.rows[0]) setColumns(Object.keys(c.rows[0]));
       }
     });
   }, []);
@@ -62,7 +64,7 @@ export default function SendScreen({
       PermissionsAndroid.PERMISSIONS.SEND_SMS,
       {
         title: 'SMS Permission Required',
-        message: 'ChallanSMS needs permission to send SMS via your SIM card.',
+        message: 'Bulk SMS needs permission to send SMS via your SIM card.',
         buttonPositive: 'Allow',
         buttonNegative: 'Deny',
       }
@@ -71,11 +73,12 @@ export default function SendScreen({
   };
 
   // ── Take freshly-parsed rows and set up either a campaign or a single shot ───
-  const ingestRows = async (parsed, fn) => {
+  const ingestRows = async (parsed, fn, columns) => {
     setRowStatus({});
     setProgress(0);
     setPreviewIdx(0);
     setFileName(fn);
+    if (setColumns) setColumns(columns || []);
 
     if (batchEnabled) {
       // Fresh campaign uses the current Settings limit (not any prior campaign's size).
@@ -106,8 +109,8 @@ export default function SendScreen({
     setLoadModal(false);
     setLoading(true);
     try {
-      const { rows: r, fileName: fn } = await pickFromStorage();
-      await ingestRows(r, fn);
+      const { rows: r, fileName: fn, columns } = await pickFromStorage({ contactColumn });
+      await ingestRows(r, fn, columns);
     } catch (e) {
       if (!e.toString().includes('cancel')) {
         addLog(`❌ File load error: ${e.message}`, 'error');
@@ -120,8 +123,8 @@ export default function SendScreen({
   // ── Load from paste ──────────────────────────────────────────────────────────
   const loadFromPaste = async () => {
     try {
-      const r = parseCSVText(pasteText);
-      await ingestRows(r, 'Pasted data');
+      const { rows: r, columns } = parseCSVText(pasteText, { contactColumn });
+      await ingestRows(r, 'Pasted data', columns);
       setPasteModal(false);
       setPasteText('');
     } catch (e) {
@@ -169,7 +172,7 @@ export default function SendScreen({
       if (remaining <= 0)  { addLog(`📅 Daily limit (${LIMIT}) reached — stopping`, 'warn'); break; }
 
       const row     = rows[i];
-      const contact = getContact(row);
+      const contact = getContact(row, contactColumn);
       const vehicle = row['Vehicle Number'] || '?';
       const amount  = row['Amount (Rs.)'] || '0';
       const n       = i + 1;
@@ -429,7 +432,7 @@ export default function SendScreen({
           </View>
           <View style={s.chipRow}>
             <View style={[s.chip, { backgroundColor: 'rgba(79,142,247,.15)' }]}>
-              <Text style={{ color: C.accent, fontSize: 11, fontWeight: '700' }}>📞 {getContact(prow) || 'No contact'}</Text>
+              <Text style={{ color: C.accent, fontSize: 11, fontWeight: '700' }}>📞 {getContact(prow, contactColumn) || 'No contact'}</Text>
             </View>
             <View style={[s.chip, { backgroundColor: 'rgba(245,158,11,.15)' }]}>
               <Text style={{ color: C.yellow, fontSize: 11, fontWeight: '700' }}>🚗 {prow['Vehicle Number'] || 'N/A'}</Text>
@@ -519,7 +522,7 @@ export default function SendScreen({
                 <View style={[s.statusDot, { backgroundColor: dotColor }]} />
                 {day != null && <Text style={s.tableDay}>D{day}</Text>}
                 <Text style={[s.tableVehicle]}>{row['Vehicle Number'] || '—'}</Text>
-                <Text style={s.tableContact}>{getContact(row) || '—'}</Text>
+                <Text style={s.tableContact}>{getContact(row, contactColumn) || '—'}</Text>
                 <Text style={[s.tableAmount, { color: C.green }]}>₹{row['Amount (Rs.)'] || '0'}</Text>
                 <Text style={[s.tableStatus, { color: dotColor }]}>{st2}</Text>
               </TouchableOpacity>

@@ -17,7 +17,7 @@ export default function LogsScreen({ logs, setLogs }) {
 
   const exportLogs = async () => {
     const text = logs.map(l => `[${l.date || '----------'} ${l.time}] [${l.type.toUpperCase()}] ${l.msg}`).join('\n');
-    await Share.share({ message: text, title: 'ChallanSMS Logs' });
+    await Share.share({ message: text, title: 'Bulk SMS Logs' });
   };
 
   const clearLogs = () => {

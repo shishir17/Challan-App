@@ -2,8 +2,8 @@
 2<!-- android/app/src/main/AndroidManifest.xml -->
 3<manifest xmlns:android="http://schemas.android.com/apk/res/android"
 4    package="com.challansms"
-5    android:versionCode="1"
-6    android:versionName="2.0" >
+5    android:versionCode="2"
+6    android:versionName="2.1" >
 7
 8    <uses-sdk
 9        android:minSdkVersion="23"

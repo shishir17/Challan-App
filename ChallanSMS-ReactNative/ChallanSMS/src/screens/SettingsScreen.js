@@ -1,5 +1,5 @@
 // src/screens/SettingsScreen.js
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TextInput,
   TouchableOpacity, Switch, Alert, Platform,
@@ -10,7 +10,39 @@ import { clearCampaign } from '../utils/campaign';
 
 const STABS = ['Templates', 'General', 'About'];
 
-export default function SettingsScreen({ settings, saveSettings, addLog }) {
+// Numeric field that lets you freely edit (including clearing it) while typing,
+// and only clamps/commits the value when you finish editing (blur / submit).
+// This fixes the bug where typing a multi-digit limit snapped back to "1".
+function NumField({ value, onCommit, min, max, fallback, width = 80 }) {
+  const [text, setText] = useState(String(value ?? ''));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { if (!focused) setText(String(value ?? '')); }, [value, focused]);
+
+  const commit = () => {
+    setFocused(false);
+    let n = parseInt(text, 10);
+    if (isNaN(n)) n = fallback;
+    if (min != null) n = Math.max(min, n);
+    if (max != null) n = Math.min(max, n);
+    setText(String(n));
+    onCommit(n);
+  };
+
+  return (
+    <TextInput
+      style={[st.inp, { width, textAlign: 'center' }]}
+      value={text}
+      onFocus={() => setFocused(true)}
+      onChangeText={setText}
+      onBlur={commit}
+      onSubmitEditing={commit}
+      keyboardType="numeric"
+      returnKeyType="done"
+    />
+  );
+}
+
+export default function SettingsScreen({ settings, saveSettings, addLog, columns = [] }) {
   const [tab, setTab] = useState('Templates');
   const s = settings;
 
@@ -71,12 +103,34 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
 
           <View style={st.hintBox}>
             <Text style={st.hintTxt}>
-              Variables you can use:{'\n'}
-              <Text style={{ color: C.accent }}>{'  {amount}'}</Text>        — Fine amount{'\n'}
-              <Text style={{ color: C.accent }}>{'  {vehicle_number}'}</Text> — Vehicle reg no.{'\n'}
-              <Text style={{ color: C.accent }}>{'  {challan_number}'}</Text> — Challan ID{'\n'}
-              <Text style={{ color: C.accent }}>{'  {violator_name}'}</Text>  — Violator's name
+              Use any column from your file as a variable by wrapping its header in
+              {' '}<Text style={{ color: C.accent }}>{'{ }'}</Text>. Example: a file with
+              {' '}headers <Text style={{ color: C.text }}>name, mob, reason</Text> →
+              {' '}template <Text style={{ color: C.accent }}>Hello {'{name}'} — {'{reason}'}</Text>.
             </Text>
+            {columns.length > 0 ? (
+              <>
+                <Text style={[st.hintTxt, { marginTop: 8, color: C.text, fontWeight: '700' }]}>
+                  Columns in your loaded file (tap-friendly):
+                </Text>
+                <View style={st.chipWrap}>
+                  {columns.map(col => (
+                    <View key={col} style={st.varChip}>
+                      <Text style={st.varChipTxt}>{`{${col}}`}</Text>
+                    </View>
+                  ))}
+                </View>
+              </>
+            ) : (
+              <Text style={[st.hintTxt, { marginTop: 8 }]}>
+                Built-in aliases also work:{'\n'}
+                <Text style={{ color: C.accent }}>{'  {amount}'}</Text> ·
+                <Text style={{ color: C.accent }}>{' {vehicle_number}'}</Text> ·
+                <Text style={{ color: C.accent }}>{' {challan_number}'}</Text> ·
+                <Text style={{ color: C.accent }}>{' {violator_name}'}</Text>
+                {'\n'}Load a file on the Send tab to see its exact column names here.
+              </Text>
+            )}
           </View>
 
           <View style={st.fg}>
@@ -122,6 +176,43 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
       {tab === 'General' && (
         <>
           <View style={st.card}>
+            <Text style={st.cardTitle}>📑 FILE COLUMNS</Text>
+
+            <View style={st.fg}>
+              <Text style={st.label}>Phone / Contact Column</Text>
+              <Text style={[st.switchSub, { marginBottom: 6 }]}>
+                Header of the column that holds the mobile number. Leave the default
+                if unsure — the app also auto-detects columns named like
+                "contact", "mobile", "phone".
+              </Text>
+              <TextInput
+                style={st.inp}
+                value={s.contactColumn || ''}
+                onChangeText={v => update('contactColumn', v)}
+                placeholder="e.g. Violator Contact / mob / phone"
+                placeholderTextColor={C.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            {columns.length > 0 && (
+              <View style={st.hintBox}>
+                <Text style={[st.hintTxt, { color: C.text, fontWeight: '700' }]}>
+                  Detected columns in your loaded file:
+                </Text>
+                <View style={st.chipWrap}>
+                  {columns.map(col => (
+                    <View key={col} style={st.varChip}>
+                      <Text style={st.varChipTxt}>{col}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+          </View>
+
+          <View style={st.card}>
             <Text style={st.cardTitle}>⚙️ SEND SETTINGS</Text>
 
             <View style={st.row}>
@@ -132,7 +223,7 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
               <TextInput
                 style={[st.inp, { width: 70, textAlign: 'center' }]}
                 value={s.countryCode}
-                onChangeText={v => update('countryCode', v)}
+                onChangeText={v => update('countryCode', v.replace(/\D/g, ''))}
                 keyboardType="numeric"
                 maxLength={4}
               />
@@ -143,11 +234,13 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
                 <Text style={st.switchLabel}>Delay Between Messages</Text>
                 <Text style={st.switchSub}>Milliseconds. Recommended: 2000–5000ms</Text>
               </View>
-              <TextInput
-                style={[st.inp, { width: 80, textAlign: 'center' }]}
-                value={String(s.delay)}
-                onChangeText={v => update('delay', parseInt(v) || 3000)}
-                keyboardType="numeric"
+              <NumField
+                value={s.delay}
+                onCommit={v => update('delay', v)}
+                min={0}
+                max={60000}
+                fallback={3000}
+                width={80}
               />
             </View>
           </View>
@@ -167,11 +260,13 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
                 <Text style={st.switchLabel}>Daily Limit (per day)</Text>
                 <Text style={st.switchSub}>Records sent per day · batch size · max {DAILY_LIMIT}</Text>
               </View>
-              <TextInput
-                style={[st.inp, { width: 80, textAlign: 'center' }]}
-                value={String(s.dailyLimit || DAILY_LIMIT)}
-                onChangeText={v => update('dailyLimit', Math.min(Math.max(parseInt(v) || 1, 1), DAILY_LIMIT))}
-                keyboardType="numeric"
+              <NumField
+                value={s.dailyLimit || DAILY_LIMIT}
+                onCommit={v => update('dailyLimit', v)}
+                min={1}
+                max={DAILY_LIMIT}
+                fallback={DAILY_LIMIT}
+                width={80}
               />
             </View>
           </View>
@@ -264,22 +359,19 @@ export default function SettingsScreen({ settings, saveSettings, addLog }) {
       {tab === 'About' && (
         <View style={st.card}>
           <Text style={st.cardTitle}>ℹ️ ABOUT</Text>
-          <Text style={st.aboutLine}>App: ChallanSMS v2.0</Text>
-          <Text style={st.aboutLine}>For: UP Traffic Department</Text>
+          <Text style={st.aboutLine}>App: Bulk SMS v2.1</Text>
+          <Text style={st.aboutLine}>Mode: SMS Sim Based</Text>
           <Text style={st.aboutLine}>SMS: Direct SIM (Android) / Messages app (iOS)</Text>
-          <Text style={st.aboutLine}>Daily limit: 200 SMS/day</Text>
+          <Text style={st.aboutLine}>Daily limit: up to {DAILY_LIMIT} SMS/day</Text>
           <Text style={st.aboutLine}>No internet needed for SMS</Text>
-          <Text style={st.aboutLine}>File formats: .xlsx, .xlsm, .csv</Text>
+          <Text style={st.aboutLine}>File formats: .xlsx, .xlsm, .xls, .csv</Text>
 
           <View style={[st.infoBox, { marginTop: 14 }]}>
             <Text style={st.infoTxt}>
-              <Text style={{ fontWeight: '700', color: C.text }}>Required Excel columns:{'\n'}</Text>
-              • Violator Contact (mobile number){'\n'}
-              • Vehicle Number{'\n'}
-              • Amount (Rs.){'\n'}
-              • Challan Number{'\n'}
-              • Violator Name{'\n'}
-              • RTO/Office
+              <Text style={{ fontWeight: '700', color: C.text }}>Dynamic columns:{'\n'}</Text>
+              The header row is detected automatically (any report preamble above the
+              table is skipped). Set your phone column under General → File Columns,
+              and use any header as a {'{variable}'} in your template.
             </Text>
           </View>
         </View>
@@ -316,6 +408,11 @@ const st = StyleSheet.create({
   hintBox:     { backgroundColor: C.surface, borderRadius: 8, padding: 12,
                  marginBottom: 14, borderWidth: 1, borderColor: C.border },
   hintTxt:     { fontSize: 11, color: C.muted, lineHeight: 18 },
+  chipWrap:    { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  varChip:     { backgroundColor: 'rgba(79,142,247,.12)', borderRadius: 6,
+                 paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1,
+                 borderColor: 'rgba(79,142,247,.3)' },
+  varChipTxt:  { color: C.accent, fontSize: 11, fontWeight: '600' },
   row:         { flexDirection: 'row', alignItems: 'center', gap: 10 },
   switchLabel: { fontSize: 13, fontWeight: '600', color: C.text },
   switchSub:   { fontSize: 11, color: C.muted, marginTop: 2 },
