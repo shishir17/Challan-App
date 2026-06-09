@@ -1,0 +1,10 @@
+#Tue Jun 09 17:55:41 IST 2026
+base.2=/home/magento/Challan-App/ChallanSMS-ReactNative/ChallanSMS/android/app/build/intermediates/dex/release/mergeDexRelease/classes2.dex
+path.2=classes2.dex
+base.1=/home/magento/Challan-App/ChallanSMS-ReactNative/ChallanSMS/android/app/build/intermediates/global_synthetics_dex/release/classes.dex
+path.1=classes.dex
+base.0=/home/magento/Challan-App/ChallanSMS-ReactNative/ChallanSMS/android/app/build/intermediates/dex/release/mergeDexRelease/classes.dex
+renamed.2=classes3.dex
+renamed.1=classes2.dex
+renamed.0=classes.dex
+path.0=classes.dex

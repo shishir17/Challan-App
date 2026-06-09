@@ -1,0 +1,38 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.challansms.app-mergeReleaseResources-27:/values-v16/values-v16.xml",
+            "map": [
+                {
+                    "source": "/home/magento/.gradle/caches/transforms-3/ff222969102f4d4bda61f3ed86665901/transformed/appcompat-1.6.1/res/values-v16/values-v16.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endLines": "5",
+                        "endColumns": "12",
+                        "endOffsets": "223"
+                    },
+                    "to": {
+                        "startLines": "3",
+                        "startColumns": "4",
+                        "startOffsets": "121",
+                        "endLines": "6",
+                        "endColumns": "12",
+                        "endOffsets": "289"
+                    }
+                },
+                {
+                    "source": "/home/magento/.gradle/caches/transforms-3/f03f27db16f782035259b67787fc478a/transformed/core-1.9.0/res/values-v16/values-v16.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "65",
+                        "endOffsets": "116"
+                    }
+                }
+            ]
+        }
+    ]
+}
